@@ -1,0 +1,159 @@
+// Campus LMS data model.
+// Every record belongs to a School, so one deployment can later serve several schools.
+// Database: PostgreSQL everywhere (own server, Docker, Supabase, Neon, Railway, Render…).
+// Change the model → run `npm run db:migrate -- --name <change>` to create a migration.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Install-wide key/value settings (setup state, integrations).
+/// Values with secret=true are encrypted with AES-256-GCM (see src/lib/secrets.ts).
+model SystemSetting {
+  key       String   @id
+  value     String
+  secret    Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+}
+
+model School {
+  id         String   @id @default(cuid())
+  name       String
+  slug       String   @unique
+  brandColor String   @default("#4f46e5")
+  /// Contact details shown to staff, students and parents
+  address      String?
+  phone        String?
+  email        String?
+  website      String?
+  timezone     String  @default("UTC")
+  academicYear String?
+  /// Logo stored in the database so it works on any host (no file storage needed)
+  logo          Bytes?
+  logoMime      String?
+  logoUpdatedAt DateTime?
+  createdAt  DateTime @default(now())
+  users      User[]
+  courses    Course[]
+}
+
+/// role: "ADMIN" | "TEACHER" | "STUDENT"
+model User {
+  id            String           @id @default(cuid())
+  schoolId      String
+  school        School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  email         String           @unique
+  name          String
+  passwordHash  String
+  role          String           @default("STUDENT")
+  gradeLevel    String?
+  createdAt     DateTime         @default(now())
+  coursesTaught Course[]         @relation("CourseTeacher")
+  enrollments   Enrollment[]
+  submissions   Submission[]
+  announcements Announcement[]
+  progress      LessonProgress[]
+
+  @@index([schoolId, role])
+}
+
+model Course {
+  id            String         @id @default(cuid())
+  schoolId      String
+  school        School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  code          String
+  title         String
+  description   String         @default("")
+  color         String         @default("indigo")
+  teacherId     String?
+  teacher       User?          @relation("CourseTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
+  createdAt     DateTime       @default(now())
+  enrollments   Enrollment[]
+  lessons       Lesson[]
+  assignments   Assignment[]
+  announcements Announcement[]
+
+  @@index([schoolId])
+}
+
+model Enrollment {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+}
+
+model Lesson {
+  id        String           @id @default(cuid())
+  courseId  String
+  course    Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title     String
+  content   String
+  position  Int              @default(0)
+  createdAt DateTime         @default(now())
+  progress  LessonProgress[]
+
+  @@index([courseId, position])
+}
+
+model LessonProgress {
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId    String
+  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  completedAt DateTime @default(now())
+
+  @@id([userId, lessonId])
+}
+
+model Assignment {
+  id           String       @id @default(cuid())
+  courseId     String
+  course       Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title        String
+  instructions String
+  dueAt        DateTime
+  points       Int          @default(100)
+  createdAt    DateTime     @default(now())
+  submissions  Submission[]
+
+  @@index([courseId, dueAt])
+}
+
+model Submission {
+  id           String     @id @default(cuid())
+  assignmentId String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  studentId    String
+  student      User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  content      String
+  submittedAt  DateTime   @default(now())
+  score        Int?
+  feedback     String?
+  gradedAt     DateTime?
+
+  @@unique([assignmentId, studentId])
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([courseId, createdAt])
+}

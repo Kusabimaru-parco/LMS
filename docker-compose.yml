@@ -1,0 +1,56 @@
+# Campus LMS on your own server.
+# Values come from .env, which install.sh creates. Do not commit .env.
+#
+#   docker compose up -d --build     start / update
+#   docker compose logs -f app       view logs (the setup code is printed here on a fresh install)
+#   docker compose down              stop (data is kept in the db-data volume)
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lms
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run install.sh first}
+      POSTGRES_DB: campus_lms
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lms -d campus_lms"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    image: campus-lms:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://lms:${POSTGRES_PASSWORD}@db:5432/campus_lms
+      AUTH_SECRET: ${AUTH_SECRET:?run install.sh first}
+      SETUP_CODE: ${SETUP_CODE:-}
+      APP_URL: ${APP_URL:-}
+      DEMO_MODE: "false"
+    ports:
+      # With HTTPS (Caddy) enabled, install.sh binds this to 127.0.0.1 so only Caddy can reach it.
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-3000}:3000"
+
+  # Optional automatic HTTPS. Enabled when install.sh is given a domain (COMPOSE_PROFILES=https).
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["https"]
+    restart: unless-stopped
+    depends_on: [app]
+    command: caddy reverse-proxy --from ${DOMAIN:-localhost} --to app:3000
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+
+volumes:
+  db-data:
+  caddy-data:

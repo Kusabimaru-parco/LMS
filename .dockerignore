@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.pgdata
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+.claude
+docs
+*.md
