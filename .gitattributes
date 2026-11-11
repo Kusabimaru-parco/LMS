@@ -1,0 +1,7 @@
+# Files that run on Linux servers must keep LF line endings, even on Windows checkouts.
+*.sh text eol=lf
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+.dockerignore text eol=lf
+*.prisma text eol=lf
+*.sql text eol=lf
