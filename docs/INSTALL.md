@@ -180,6 +180,7 @@ On phones and laptops, Campus LMS can be added to the home screen ("Install app"
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `MIGRATE_DATABASE_URL` | Serverless | Session connection used only for database migrations during the build. On Vercel + Supabase, `DATABASE_URL` is the Transaction pooler (port 6543, `?pgbouncer=true&connection_limit=1`) and this is the Session pooler (5432). `npm run setup:baas` sets both. |
 | `AUTH_SECRET` | Yes | 32+ random characters. Signs sessions and encrypts stored secrets. **Back it up.** |
 | `SETUP_CODE` | No | Fixed setup code. If it's not set, one is generated and printed in the logs. |
 | `APP_URL` | Recommended | Public address, e.g. `https://lms.yourschool.edu` |

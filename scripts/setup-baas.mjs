@@ -29,7 +29,19 @@ bold("Campus LMS setup for managed hosting (Vercel + Supabase/Neon)\n");
 console.log("1. Database. Supabase: Project → Connect → Session pooler (port 5432). Neon: the connection string.");
 const databaseUrl = await ask("PostgreSQL connection string");
 if (!/^postgres(ql)?:\/\//.test(databaseUrl)) failNow("That isn't a PostgreSQL connection string (it starts with postgresql://).");
-if (/:6543\b/.test(databaseUrl)) console.log("  Note: port 6543 is Supabase's transaction pooler. Use the Session pooler (5432) for Campus LMS.");
+if (/:6543\b/.test(databaseUrl)) failNow("Paste the Session pooler string (port 5432). The script works out the Transaction pooler address itself.");
+
+// Serverless hosts start many small server instances. Each must use ONE pooled connection through the
+// transaction pooler, or Supabase's session pool (15 clients) fills up: "max clients reached".
+// Migrations still need a session connection, so the build uses MIGRATE_DATABASE_URL for them.
+function runtimeUrl(url) {
+  const u = new URL(url);
+  if (u.hostname.endsWith(".pooler.supabase.com")) u.port = "6543";
+  u.searchParams.set("pgbouncer", "true");
+  u.searchParams.set("connection_limit", "1");
+  u.searchParams.set("pool_timeout", "20");
+  return u.toString();
+}
 try {
   execFileSync("npx", ["prisma", "migrate", "deploy"], { stdio: "inherit", env: { ...process.env, DATABASE_URL: databaseUrl }, shell: process.platform === "win32" });
   ok("Database reachable and tables created");
@@ -69,7 +81,8 @@ rl.close();
 
 // 4. Write the environment file
 const env = {
-  DATABASE_URL: databaseUrl,
+  DATABASE_URL: runtimeUrl(databaseUrl),
+  MIGRATE_DATABASE_URL: databaseUrl,
   AUTH_SECRET: rand(48),
   SETUP_CODE: code(),
   APP_URL: appUrl,

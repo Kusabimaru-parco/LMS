@@ -13,7 +13,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:reset": "prisma migrate reset --force --skip-seed",
     "demo": "prisma migrate deploy && node prisma/seed.mjs",
-    "vercel-build": "prisma generate && prisma migrate deploy && next build",
+    "vercel-build": "prisma generate && DATABASE_URL=\"${MIGRATE_DATABASE_URL:-$DATABASE_URL}\" prisma migrate deploy && next build",
     "postinstall": "prisma generate",
     "setup:baas": "node scripts/setup-baas.mjs",
     "release": "bash scripts/package-release.sh"
