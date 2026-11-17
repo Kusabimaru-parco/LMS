@@ -19,7 +19,7 @@
     "release": "bash scripts/package-release.sh"
   },
   "dependencies": {
-    "@prisma/client": "6.9.0",
+    "@prisma/client": "7.10.1",
     "aws4fetch": "1.0.20",
     "bcryptjs": "3.0.2",
     "clsx": "2.1.1",
