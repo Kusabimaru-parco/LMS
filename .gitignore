@@ -8,4 +8,9 @@ out
 next-env.d.ts
 *.tsbuildinfo
 .pgdata
+data
 dist
+deploy/baas/*.env
+logs
+.update
+backups

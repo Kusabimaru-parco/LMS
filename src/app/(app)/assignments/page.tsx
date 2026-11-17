@@ -8,7 +8,7 @@ import { AssignmentRow, AssignmentStatus } from "@/components/lms";
 export const metadata: Metadata = { title: "Assignments" };
 
 export default async function AssignmentsPage() {
-  const user = await requireUser();
+  const user = await requireUser(["ADMIN", "TEACHER", "STUDENT"]);
   const all = await getAssignments(user);
   const now = new Date();
   const week = new Date(Date.now() + 7 * 86_400_000);

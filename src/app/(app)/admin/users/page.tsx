@@ -1,13 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Search, Trash2 } from "lucide-react";
+import { FileUp, Search, Trash2 } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { createUser, deleteUser } from "@/app/actions";
-import { Avatar, Badge, Card, CardHeader, Input, PageHeader, focusRing } from "@/components/ui";
+import { createUser, deleteUser, resetUserPassword } from "@/app/actions";
+import { isEmailConfigured } from "@/lib/email";
+import { ResetPasswordButton } from "@/components/reset-password-button";
+import { Avatar, Badge, ButtonLink, Card, CardHeader, Input, PageHeader, focusRing } from "@/components/ui";
 import { SimpleForm } from "@/components/simple-form";
 import { ConfirmButton } from "@/components/confirm-button";
-import { cn, ROLE_LABEL } from "@/lib/utils";
+import { cn, ROLE_LABEL, avatarUrl } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "People" };
 
@@ -15,25 +17,28 @@ const FILTERS = [
   { id: "", label: "Everyone" },
   { id: "STUDENT", label: "Students" },
   { id: "TEACHER", label: "Teachers" },
+  { id: "PARENT", label: "Parents" },
   { id: "ADMIN", label: "Admins" },
 ];
 
 export default async function UsersPage({ searchParams }: { searchParams: Promise<{ role?: string; q?: string }> }) {
   const admin = await requireUser(["ADMIN"]);
   const { role = "", q = "" } = await searchParams;
+  const emailOn = await isEmailConfigured();
   const users = await db.user.findMany({
     where: {
       schoolId: admin.schoolId,
       role: role || undefined,
-      OR: q ? [{ name: { contains: q } }, { email: { contains: q } }] : undefined,
+      OR: q ? [{ name: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }] : undefined,
     },
     orderBy: [{ role: "asc" }, { name: "asc" }],
-    include: { _count: { select: { enrollments: true, coursesTaught: true } } },
+    include: { _count: { select: { enrollments: true, coursesTaught: true, children: true } } },
   });
 
   return (
     <>
-      <PageHeader title="People" description={`Manage everyone at ${admin.school.name}.`} />
+      <PageHeader title="People" description={`Manage everyone at ${admin.school.name}.`}
+        actions={<ButtonLink href="/admin/users/import" variant="secondary"><FileUp className="size-4" aria-hidden />Import from CSV</ButtonLink>} />
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <div className="space-y-3 border-b border-slate-100 p-4">
@@ -43,7 +48,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" aria-hidden />
               <Input id="q" name="q" type="search" defaultValue={q} placeholder="Search by name or email" className="pl-9" />
             </form>
-            <nav aria-label="Filter by role" className="-mx-4 overflow-x-auto px-4">
+            <nav aria-label="Filter by role" className="no-scrollbar -mx-4 overflow-x-auto px-4">
               <ul className="flex min-w-max gap-2">
                 {FILTERS.map((f) => (
                   <li key={f.id}>
@@ -66,19 +71,23 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
           <p className="px-5 pt-3 text-xs text-slate-500" aria-live="polite">{users.length} {users.length === 1 ? "person" : "people"}</p>
           <ul className="divide-y divide-slate-100">
             {users.map((u) => (
-              <li key={u.id} className="flex items-center gap-3 px-5 py-3">
-                <Avatar name={u.name} size="sm" />
+              <li key={u.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3">
+                <Avatar name={u.name} size="sm" src={avatarUrl(u)} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-slate-900">{u.name}</p>
+                  <p className="truncate text-sm font-medium text-slate-900">
+                    <Link href={`/admin/users/${u.id}`} className="hover:text-brand-700 hover:underline">{u.name}</Link>
+                    {u.mustChangePassword && <span className="ml-2 text-xs font-normal text-amber-700">Hasn't signed in yet</span>}
+                  </p>
                   <p className="truncate text-xs text-slate-500">
                     {u.email}
                     <span className="hidden sm:inline">
                       {" · "}
-                      {u.role === "STUDENT" ? `${u._count.enrollments} courses${u.gradeLevel ? ` · ${u.gradeLevel}` : ""}` : u.role === "TEACHER" ? `Teaches ${u._count.coursesTaught}` : "Full access"}
+                      {u.role === "STUDENT" ? `${u._count.enrollments} courses${u.gradeLevel ? ` · ${u.gradeLevel}` : ""}` : u.role === "TEACHER" ? `Teaches ${u._count.coursesTaught}` : u.role === "PARENT" ? `${u._count.children} child${u._count.children === 1 ? "" : "ren"}` : "Full access"}
                     </span>
                   </p>
                 </div>
-                <Badge tone={u.role === "ADMIN" ? "brand" : u.role === "TEACHER" ? "success" : "neutral"}>{ROLE_LABEL[u.role]}</Badge>
+                <Badge tone={u.role === "ADMIN" ? "brand" : u.role === "TEACHER" ? "success" : u.role === "PARENT" ? "warning" : "neutral"}>{ROLE_LABEL[u.role]}</Badge>
+                {u.id !== admin.id && <ResetPasswordButton name={u.name} action={resetUserPassword.bind(null, u.id)} />}
                 {u.id !== admin.id ? (
                   <form action={deleteUser.bind(null, u.id)}>
                     <ConfirmButton
@@ -99,7 +108,12 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
         </Card>
 
         <Card className="self-start">
-          <CardHeader title="Add a person" description="They can sign in right away." />
+          <CardHeader
+            title="Add a person"
+            description={emailOn
+              ? "We'll email them a temporary password. They choose their own when they first sign in."
+              : "You'll get a temporary password to give them. Turn on email in School settings to send it automatically."}
+          />
           <div className="p-5">
             <SimpleForm
               action={createUser}
@@ -111,10 +125,10 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                 { name: "email", label: "Email", type: "email", required: true, autoComplete: "off" },
                 {
                   name: "role", label: "Role", type: "select", defaultValue: "STUDENT",
-                  options: [{ value: "STUDENT", label: "Student" }, { value: "TEACHER", label: "Teacher" }, { value: "ADMIN", label: "Administrator" }],
+                  options: [{ value: "STUDENT", label: "Student" }, { value: "TEACHER", label: "Teacher" }, { value: "PARENT", label: "Parent or guardian" }, { value: "ADMIN", label: "Administrator" }],
                 },
                 { name: "gradeLevel", label: "Grade level", placeholder: "e.g. Grade 10", hint: "Students only." },
-                { name: "password", label: "Temporary password", type: "password", required: true, autoComplete: "new-password", hint: "At least 8 characters. Share it with them privately." },
+                { name: "children", label: "Children's school emails", placeholder: "liam@school.edu, mia@school.edu", hint: "Parents only. Links them to their children's grades and attendance." },
               ]}
             />
           </div>

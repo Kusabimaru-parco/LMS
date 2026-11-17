@@ -12,6 +12,8 @@ export function SubmitButton({
   className,
   name,
   value,
+  pending: pendingProp,
+  onClick,
 }: {
   children: ReactNode;
   pendingText?: string;
@@ -19,10 +21,14 @@ export function SubmitButton({
   className?: string;
   name?: string;
   value?: string;
+  /** Pass when the form submits through useFormAction (useFormStatus only sees `<form action>`). */
+  pending?: boolean;
+  onClick?: () => void;
 }) {
-  const { pending } = useFormStatus();
+  const status = useFormStatus();
+  const pending = pendingProp ?? status.pending;
   return (
-    <Button type="submit" variant={variant} disabled={pending} aria-disabled={pending} className={className} name={name} value={value}>
+    <Button type="submit" variant={variant} disabled={pending} aria-disabled={pending} className={className} name={name} value={value} onClick={onClick}>
       {pending && <Loader2 className="size-4 animate-spin" aria-hidden />}
       {pending ? (pendingText ?? "Saving…") : children}
     </Button>

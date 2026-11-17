@@ -1,15 +1,17 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { FormState } from "@/app/actions";
 import { Alert, Field, Input, Select, Textarea } from "./ui";
 import { SubmitButton } from "./submit-button";
+import { CopyValue } from "./copy-value";
+import { useFormAction } from "./use-form-action";
 import { cn } from "@/lib/utils";
 
 export type FieldDef = {
   name: string;
   label: string;
-  type?: "text" | "email" | "password" | "number" | "datetime-local" | "textarea" | "select" | "color";
+  type?: "text" | "email" | "password" | "number" | "date" | "datetime-local" | "textarea" | "select" | "color" | "url";
   required?: boolean;
   hint?: string;
   placeholder?: string;
@@ -22,7 +24,7 @@ export type FieldDef = {
   autoComplete?: string;
 };
 
-/** Config-driven form with inline errors, success message and pending state. */
+/** Config-driven form with inline errors, success message and pending state. Keeps typed values on errors. */
 export function SimpleForm({
   action,
   fields,
@@ -40,7 +42,7 @@ export function SimpleForm({
   className?: string;
   footer?: React.ReactNode;
 }) {
-  const [state, formAction] = useActionState(action, undefined);
+  const { state, pending, onSubmit } = useFormAction(action);
   const ref = useRef<HTMLFormElement>(null);
   const e = state?.errors ?? {};
 
@@ -49,8 +51,13 @@ export function SimpleForm({
   }, [state, resetOnSuccess]);
 
   return (
-    <form ref={ref} action={formAction} className={cn("space-y-5", className)} noValidate>
-      {state?.message && <Alert tone={state.ok ? "success" : "danger"}>{state.message}</Alert>}
+    <form ref={ref} onSubmit={onSubmit} className={cn("space-y-5", className)} noValidate>
+      {state?.message && (
+        <Alert tone={state.ok ? "success" : "danger"}>
+          {state.message}
+          {state.code && <CopyValue value={state.code} className="mt-3" />}
+        </Alert>
+      )}
       <div className="grid gap-5 sm:grid-cols-2">
         {fields.map((f) => {
           const id = `f-${f.name}`;
@@ -84,7 +91,7 @@ export function SimpleForm({
       </div>
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
         {footer}
-        <SubmitButton pendingText={pendingLabel}>{submitLabel}</SubmitButton>
+        <SubmitButton pending={pending} pendingText={pendingLabel}>{submitLabel}</SubmitButton>
       </div>
     </form>
   );

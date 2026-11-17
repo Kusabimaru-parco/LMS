@@ -1,0 +1,21 @@
+# HTTPS front door for Campus LMS (used by docker-compose.yml when a domain is set).
+# Certificates come from Let's Encrypt automatically and renew by themselves.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Uploads: files up to MAX_UPLOAD_MB each, a few per hand-in
+	request_body {
+		max_size 200MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	reverse_proxy app:3000
+}

@@ -68,7 +68,11 @@ export function letterGrade(pct: number | null) {
   return "F";
 }
 
-export const ROLE_LABEL: Record<string, string> = { ADMIN: "Administrator", TEACHER: "Teacher", STUDENT: "Student" };
+export const ROLE_LABEL: Record<string, string> = { ADMIN: "Administrator", TEACHER: "Teacher", STUDENT: "Student", PARENT: "Parent" };
+
+/** Profile picture URL (versioned so browsers refetch after a change), or null for initials. */
+export const avatarUrl = (u: { id: string; avatarUpdatedAt?: Date | null } | null | undefined) =>
+  u?.avatarUpdatedAt ? `/api/users/${u.id}/avatar?v=${u.avatarUpdatedAt.getTime()}` : null;
 
 /** "YYYY-MM-DDTHH:mm" for datetime-local inputs */
 export function toLocalInput(d: Date) {

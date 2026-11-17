@@ -51,7 +51,7 @@ export default async function LessonPage({ params }: P) {
       <article>
         <Card className="p-5 sm:p-8">
           <p className="text-sm font-medium text-brand-700">Lesson {idx + 1} of {course.lessons.length}</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">{lesson.title}</h1>
+          <h1 className="mt-1 font-display text-[1.75rem] font-semibold leading-tight text-slate-900 sm:text-3xl">{lesson.title}</h1>
           <div className="mt-6 text-base">
             <LessonContent text={lesson.content} />
           </div>

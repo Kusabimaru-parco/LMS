@@ -1,9 +1,13 @@
 # Campus LMS on your own server.
 # Values come from .env, which install.sh creates. Do not commit .env.
 #
-#   docker compose up -d --build     start / update
-#   docker compose logs -f app       view logs (the setup code is printed here on a fresh install)
-#   docker compose down              stop (data is kept in the db-data volume)
+#   lms status | logs | backup | update | rollback      (the "lms" command, see lms.sh)
+#   docker compose up -d                                 start
+#   docker compose down                                  stop (data is kept in volumes)
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
 
 services:
   db:
@@ -13,17 +17,26 @@ services:
       POSTGRES_USER: lms
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run install.sh first}
       POSTGRES_DB: campus_lms
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     volumes:
       - db-data:/var/lib/postgresql/data
+    shm_size: 256mb
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lms -d campus_lms"]
       interval: 5s
       timeout: 5s
       retries: 20
+    logging: *logging
+    # The database is only reachable from the app container, never from outside.
 
   app:
-    build: .
-    image: campus-lms:latest
+    build:
+      context: .
+      args:
+        APP_VERSION: ${LMS_VERSION:-dev}
+    # Tagged with the version so "lms rollback" can switch back to the previous image instantly.
+    # With prebuilt images, LMS_IMAGE is e.g. ghcr.io/your-company/campus-lms.
+    image: ${LMS_IMAGE:-campus-lms}:${LMS_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       db:
@@ -34,23 +47,39 @@ services:
       SETUP_CODE: ${SETUP_CODE:-}
       APP_URL: ${APP_URL:-}
       DEMO_MODE: "false"
+      UPLOAD_DIR: /app/data/uploads
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      UPDATE_FEED_URL: ${UPDATE_FEED_URL:-}
+    volumes:
+      - uploads:/app/data/uploads
     ports:
       # With HTTPS (Caddy) enabled, install.sh binds this to 127.0.0.1 so only Caddy can reach it.
       - "${APP_BIND:-0.0.0.0}:${APP_PORT:-3000}:3000"
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
 
-  # Optional automatic HTTPS. Enabled when install.sh is given a domain (COMPOSE_PROFILES=https).
+  # Automatic HTTPS with Let's Encrypt. Enabled when install.sh is given a domain (COMPOSE_PROFILES=https).
   caddy:
     image: caddy:2-alpine
     profiles: ["https"]
     restart: unless-stopped
     depends_on: [app]
-    command: caddy reverse-proxy --from ${DOMAIN:-localhost} --to app:3000
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp"
     volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
+      - caddy-config:/config
+    logging: *logging
 
 volumes:
   db-data:
+  uploads:
   caddy-data:
+  caddy-config:

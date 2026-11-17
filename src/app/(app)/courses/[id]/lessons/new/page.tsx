@@ -4,13 +4,16 @@ import { canAccessCourse, requireUser } from "@/lib/auth";
 import { createLesson } from "@/app/actions";
 import { ButtonLink, Card, PageHeader } from "@/components/ui";
 import { SimpleForm } from "@/components/simple-form";
+import { moduleOptions } from "@/lib/queries";
 
 export const metadata: Metadata = { title: "Add lesson" };
 
-export default async function NewLessonPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function NewLessonPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ module?: string }> }) {
   const { id } = await params;
+  const { module: moduleId = "" } = await searchParams;
   const user = await requireUser(["ADMIN", "TEACHER"]);
   if (!(await canAccessCourse(user, id)).canManage) notFound();
+  const modules = await moduleOptions(id);
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title="Add a lesson" description="Write the lesson students will read. Use ## for headings and - for bullet points." />
@@ -19,8 +22,9 @@ export default async function NewLessonPage({ params }: { params: Promise<{ id: 
           action={createLesson.bind(null, id)}
           submitLabel="Publish lesson"
           pendingLabel="Publishing…"
-          footer={<ButtonLink href={`/courses/${id}`} variant="secondary">Cancel</ButtonLink>}
+          footer={<ButtonLink href={moduleId ? `/courses/${id}/modules/${moduleId}` : `/courses/${id}`} variant="secondary">Cancel</ButtonLink>}
           fields={[
+            { name: "moduleId", label: "Module", type: "select", options: modules, defaultValue: modules.some((o) => o.value === moduleId) ? moduleId : "" },
             { name: "title", label: "Lesson title", required: true, placeholder: "e.g. 6. Quadratic functions" },
             { name: "content", label: "Lesson content", type: "textarea", rows: 14, required: true, hint: "Tip: keep paragraphs short and add a 'Learning goals' list at the top." },
           ]}

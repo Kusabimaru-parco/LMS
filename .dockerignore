@@ -7,6 +7,12 @@ node_modules
 !.env.example
 *.db
 *.db-journal
+data
 .claude
 docs
 *.md
+backups
+logs
+.update
+deploy
+dist

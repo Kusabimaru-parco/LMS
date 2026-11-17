@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useFormAction } from "@/components/use-form-action";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -11,11 +12,13 @@ import {
   ImageUp,
   KeyRound,
   Loader2,
+  Send,
   ShieldCheck,
   Trash2,
   XCircle,
 } from "lucide-react";
-import { completeSetup, checkSetupCode } from "./actions";
+import { completeSetup, checkSetupCode, testSetupEmail } from "./actions";
+import { EmailSettingsFields } from "@/components/email-settings";
 import { Alert, Button, Card, Field, Input } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
 import { cn } from "@/lib/utils";
@@ -27,6 +30,7 @@ const STEPS = [
   { title: "School details", fields: ["name", "academicYear", "address", "phone", "email", "website", "timezone"] },
   { title: "Branding", fields: ["logo", "brandColor"] },
   { title: "Administrator", fields: ["adminName", "adminEmail", "adminPassword", "adminPasswordConfirm"] },
+  { title: "Email", fields: ["mailProvider", "mailFromEmail", "mailFromName", "smtpHost", "smtpPort", "smtpUser", "smtpPass", "mailApiKey"] },
   { title: "Review", fields: [] },
 ];
 
@@ -39,7 +43,7 @@ function contrastWithWhite(hex: string) {
 }
 
 export function SetupWizard({ checks }: { checks: SystemCheck[] }) {
-  const [state, action] = useActionState(completeSetup, undefined);
+  const { state, pending, onSubmit: submitSetup } = useFormAction(completeSetup);
   const [step, setStep] = useState(0);
   const [codeOk, setCodeOk] = useState(false);
   const [codeMsg, setCodeMsg] = useState<string>();
@@ -51,6 +55,8 @@ export function SetupWizard({ checks }: { checks: SystemCheck[] }) {
   const [timezone, setTimezone] = useState("UTC");
   const [timezones, setTimezones] = useState<string[]>(["UTC"]);
   const [review, setReview] = useState<Record<string, string>>({});
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; errors?: Record<string, string> }>();
   const formRef = useRef<HTMLFormElement>(null);
   const logoRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -92,7 +98,7 @@ export function SetupWizard({ checks }: { checks: SystemCheck[] }) {
       setCodeMsg(r.message);
       if (!r.ok) return;
     }
-    if (step === 3) {
+    if (step === 4) {
       const fd = new FormData(formRef.current!);
       setReview(Object.fromEntries([...fd.entries()].filter(([, v]) => typeof v === "string")) as Record<string, string>);
     }
@@ -108,11 +114,18 @@ export function SetupWizard({ checks }: { checks: SystemCheck[] }) {
     setLogoPreview(URL.createObjectURL(file));
   }
 
+  async function sendTest() {
+    const fd = new FormData(formRef.current!);
+    setTesting(true);
+    setTestResult(await testSetupEmail(String(fd.get("setupCode") ?? ""), fd));
+    setTesting(false);
+  }
+
   const ratio = contrastWithWhite(color);
   const err = (k: string) => ({ "aria-invalid": !!e[k] || undefined, "aria-describedby": e[k] ? `${k}-error` : undefined });
 
   return (
-    <div className="min-h-dvh bg-slate-50" style={{ ["--brand" as string]: color }}>
+    <div className="min-h-dvh" style={{ ["--brand" as string]: color }}>
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex h-16 max-w-4xl items-center gap-2.5 px-4 sm:px-6">
           <span className="flex size-9 items-center justify-center rounded-lg bg-brand-600 text-white">
@@ -158,8 +171,8 @@ export function SetupWizard({ checks }: { checks: SystemCheck[] }) {
           </ol>
         </nav>
 
-        <form ref={formRef} action={action} noValidate onSubmit={(ev) => {
-            if (step === STEPS.length - 1) return;
+        <form ref={formRef} noValidate onSubmit={(ev) => {
+            if (step === STEPS.length - 1) return submitSetup(ev);
             ev.preventDefault(); // Enter key on earlier steps moves forward instead of submitting
             void next();
           }}
@@ -360,8 +373,24 @@ export function SetupWizard({ checks }: { checks: SystemCheck[] }) {
             </Card>
           </Section>
 
-          {/* Step 5: Review */}
-          <Section step={4} current={step} title="Everything look right?" headingRef={headingRef}
+          {/* Step 5: Email */}
+          <Section step={4} current={step} title="How should the LMS send email?" headingRef={headingRef}
+            description="Used to email new people their temporary password and to send password reset links. You can skip this and set it up later.">
+            <Card className="space-y-5 p-5 sm:p-6">
+              <EmailSettingsFields initial={{ provider: "none", fromName: schoolName }} errors={{ ...e, ...(testResult?.errors ?? {}) }} />
+              <div className="flex flex-col gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-slate-600" role="status">
+                  {testResult ? <span className={testResult.ok ? "text-emerald-700" : "font-medium text-rose-700"}>{testResult.message}</span> : "Send a test to the administrator's email to check the settings."}
+                </p>
+                <Button type="button" variant="secondary" onClick={sendTest} disabled={testing} className="shrink-0">
+                  {testing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Send className="size-4" aria-hidden />}{testing ? "Sending…" : "Send test email"}
+                </Button>
+              </div>
+            </Card>
+          </Section>
+
+          {/* Step 6: Review */}
+          <Section step={5} current={step} title="Everything look right?" headingRef={headingRef}
             description="Check the details below, then finish setup. You'll be signed in as the administrator.">
             <Card>
               <dl className="divide-y divide-slate-100">
@@ -374,6 +403,7 @@ export function SetupWizard({ checks }: { checks: SystemCheck[] }) {
                   ["Logo", logoPreview ? "Uploaded" : "None (you can add one later)", 2],
                   ["Brand colour", review.brandColor, 2],
                   ["Administrator", review.adminName ? `${review.adminName} (${review.adminEmail})` : "", 3],
+                  ["Email", { none: "Off (set up later)", smtp: `SMTP · ${review.smtpHost ?? ""}`, resend: "Resend API", sendgrid: "SendGrid API", brevo: "Brevo API" }[review.mailProvider ?? "none"] ?? "Off", 4],
                 ].map(([label, value, goto]) => (
                   <div key={label as string} className="flex items-center gap-4 px-5 py-3">
                     <dt className="w-32 shrink-0 text-sm text-slate-500">{label}</dt>
@@ -403,7 +433,7 @@ export function SetupWizard({ checks }: { checks: SystemCheck[] }) {
                 {step === 0 ? "Get started" : "Continue"} {!checking && <ArrowRight className="size-4" aria-hidden />}
               </Button>
             ) : (
-              <SubmitButton pendingText="Setting up your school…">Finish setup</SubmitButton>
+              <SubmitButton pending={pending} pendingText="Setting up your school…">Finish setup</SubmitButton>
             )}
           </div>
         </form>
@@ -431,7 +461,7 @@ function Section({
   return (
     <section data-step={step} hidden={!active} aria-labelledby={active ? `step-${step}-title` : undefined}>
       <div className="mb-6">
-        <h1 id={`step-${step}-title`} ref={active ? headingRef : undefined} tabIndex={-1} className="text-2xl font-semibold tracking-tight text-slate-900 focus:outline-none sm:text-[1.75rem]">
+        <h1 id={`step-${step}-title`} ref={active ? headingRef : undefined} tabIndex={-1} className="font-display text-[1.75rem] font-semibold text-slate-900 focus:outline-none sm:text-[2.125rem]">
           {title}
         </h1>
         <p className="mt-1 text-sm text-slate-600 sm:text-base">{description}</p>

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { isSetupComplete } from "@/lib/settings";
-import pkg from "../../../../package.json";
+import { APP_VERSION } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
 
@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     await db.$queryRaw`SELECT 1`;
-    return Response.json({ status: "ok", version: pkg.version, setupComplete: await isSetupComplete() });
+    return Response.json({ status: "ok", version: APP_VERSION, setupComplete: await isSetupComplete() });
   } catch {
-    return Response.json({ status: "error", version: pkg.version, error: "database unreachable" }, { status: 503 });
+    return Response.json({ status: "error", version: APP_VERSION, error: "database unreachable" }, { status: 503 });
   }
 }

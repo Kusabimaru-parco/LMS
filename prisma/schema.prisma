@@ -23,42 +23,75 @@ model SystemSetting {
 }
 
 model School {
-  id         String   @id @default(cuid())
-  name       String
-  slug       String   @unique
-  brandColor String   @default("#4f46e5")
+  id            String          @id @default(cuid())
+  name          String
+  slug          String          @unique
+  brandColor    String          @default("#4f46e5")
   /// Contact details shown to staff, students and parents
-  address      String?
-  phone        String?
-  email        String?
-  website      String?
-  timezone     String  @default("UTC")
-  academicYear String?
+  address       String?
+  phone         String?
+  email         String?
+  website       String?
+  timezone      String          @default("UTC")
+  academicYear  String?
   /// Logo stored in the database so it works on any host (no file storage needed)
   logo          Bytes?
   logoMime      String?
   logoUpdatedAt DateTime?
-  createdAt  DateTime @default(now())
-  users      User[]
-  courses    Course[]
+  createdAt     DateTime        @default(now())
+  users         User[]
+  courses       Course[]
+  files         StoredFile[]
+  events        Event[]
+  /// Default category weights for averages, e.g. {"assignment":40,"quiz":30,"exam":30}. Empty = points-based.
+  gradeWeights  Json            @default("{}")
+  periods       GradingPeriod[]
+  bank          BankQuestion[]
 }
 
-/// role: "ADMIN" | "TEACHER" | "STUDENT"
+/// role: "ADMIN" | "TEACHER" | "STUDENT" | "PARENT"
 model User {
-  id            String           @id @default(cuid())
-  schoolId      String
-  school        School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  email         String           @unique
-  name          String
-  passwordHash  String
-  role          String           @default("STUDENT")
-  gradeLevel    String?
-  createdAt     DateTime         @default(now())
-  coursesTaught Course[]         @relation("CourseTeacher")
-  enrollments   Enrollment[]
-  submissions   Submission[]
-  announcements Announcement[]
-  progress      LessonProgress[]
+  id                 String               @id @default(cuid())
+  schoolId           String
+  school             School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  email              String               @unique
+  name               String
+  passwordHash       String
+  role               String               @default("STUDENT")
+  gradeLevel         String?
+  /// Set for new accounts and admin resets: the user must choose a new password after signing in.
+  mustChangePassword Boolean              @default(false)
+  /// Sessions issued before this moment are rejected (signs out other devices after a password change).
+  passwordChangedAt  DateTime?
+  lastLoginAt        DateTime?
+  /// Updated at most every few minutes while the person uses the LMS (for the insights dashboard)
+  lastSeenAt         DateTime?
+  /// Profile
+  avatar             Bytes?
+  avatarMime         String?
+  avatarUpdatedAt    DateTime?
+  phone              String?
+  bio                String?
+  /// Email reminders about due work (students) and the weekly summary (parents)
+  emailReminders     Boolean              @default(true)
+  /// Secret part of the personal calendar feed URL (.ics)
+  calendarToken      String?              @unique
+  createdAt          DateTime             @default(now())
+  coursesTaught      Course[]             @relation("CourseTeacher")
+  enrollments        Enrollment[]
+  submissions        Submission[]
+  announcements      Announcement[]
+  progress           LessonProgress[]
+  moduleDone         ModuleCompletion[]
+  resetTokens        PasswordResetToken[]
+  quizAttempts       QuizAttempt[]
+  uploads            StoredFile[]
+  eventsCreated      Event[]
+  children           ParentLink[]         @relation("ParentSide")
+  parents            ParentLink[]         @relation("ChildSide")
+  attendance         Attendance[]         @relation("AttendanceStudent")
+  attendanceTaken    Attendance[]         @relation("AttendanceRecorder")
+  bankQuestions      BankQuestion[]
 
   @@index([schoolId, role])
 }
@@ -73,11 +106,21 @@ model Course {
   color         String         @default("indigo")
   teacherId     String?
   teacher       User?          @relation("CourseTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
+  /// Code students type to join the class themselves
+  joinCode      String?        @unique
+  joinEnabled   Boolean        @default(true)
+  /// Category weights for this course; null = the school default
+  gradeWeights  Json?
   createdAt     DateTime       @default(now())
   enrollments   Enrollment[]
+  modules       Module[]
   lessons       Lesson[]
   assignments   Assignment[]
+  quizzes       Quiz[]
   announcements Announcement[]
+  files         StoredFile[]
+  events        Event[]
+  attendance    Attendance[]
 
   @@index([schoolId])
 }
@@ -97,6 +140,8 @@ model Lesson {
   id        String           @id @default(cuid())
   courseId  String
   course    Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  moduleId  String?
+  module    Module?          @relation(fields: [moduleId], references: [id], onDelete: SetNull)
   title     String
   content   String
   position  Int              @default(0)
@@ -120,10 +165,14 @@ model Assignment {
   id           String       @id @default(cuid())
   courseId     String
   course       Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  moduleId     String?
+  module       Module?      @relation(fields: [moduleId], references: [id], onDelete: SetNull)
   title        String
   instructions String
   dueAt        DateTime
   points       Int          @default(100)
+  /// [{ id, title, levels: [{ id, label, points, description }] }]. Empty = no rubric.
+  rubric       Json         @default("[]")
   createdAt    DateTime     @default(now())
   submissions  Submission[]
 
@@ -131,16 +180,19 @@ model Assignment {
 }
 
 model Submission {
-  id           String     @id @default(cuid())
+  id           String                 @id @default(cuid())
   assignmentId String
-  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  assignment   Assignment             @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   studentId    String
-  student      User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  content      String
-  submittedAt  DateTime   @default(now())
+  student      User                   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  content      String                 @default("")
+  attachments  SubmissionAttachment[]
+  submittedAt  DateTime               @default(now())
   score        Int?
   feedback     String?
   gradedAt     DateTime?
+  /// { [criterionId]: levelId } when graded with a rubric
+  rubricScores Json                   @default("{}")
 
   @@unique([assignmentId, studentId])
 }
@@ -156,4 +208,273 @@ model Announcement {
   createdAt DateTime @default(now())
 
   @@index([courseId, createdAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the token sent by email. The token itself is never stored.
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// A unit of the course outline (like a Moodle section): a description of the activities,
+/// learning materials (PDF or slides, uploaded or linked) and the lessons, assignments and quizzes in it.
+model Module {
+  id          String             @id @default(cuid())
+  courseId    String
+  course      Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title       String
+  description String             @default("")
+  position    Int                @default(0)
+  createdAt   DateTime           @default(now())
+  materials   Material[]
+  lessons     Lesson[]
+  assignments Assignment[]
+  quizzes     Quiz[]
+  completions ModuleCompletion[]
+
+  @@index([courseId, position])
+}
+
+model ModuleCompletion {
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  moduleId    String
+  module      Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  completedAt DateTime @default(now())
+
+  @@id([userId, moduleId])
+}
+
+/// kind: "FILE" (uploaded) | "LINK". format: "pdf" | "slides" | "doc" | "video" | "other"
+model Material {
+  id        String      @id @default(cuid())
+  moduleId  String
+  module    Module      @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title     String
+  kind      String
+  format    String      @default("other")
+  url       String?
+  fileId    String?     @unique
+  file      StoredFile? @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  position  Int         @default(0)
+  createdAt DateTime    @default(now())
+
+  @@index([moduleId, position])
+}
+
+/// An uploaded file. The bytes are stored on disk under UPLOAD_DIR (see src/lib/storage.ts).
+model StoredFile {
+  id           String                @id @default(cuid())
+  schoolId     String
+  school       School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  courseId     String?
+  course       Course?               @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  uploadedById String?
+  uploadedBy   User?                 @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  name         String
+  mime         String
+  size         Int
+  storageKey   String                @unique
+  createdAt    DateTime              @default(now())
+  material     Material?
+  attachment   SubmissionAttachment?
+}
+
+/// kind: "QUIZ" | "EXAM". showResults: "IMMEDIATE" | "SCORE_ONLY" | "AFTER_CLOSE"
+model Quiz {
+  id               String        @id @default(cuid())
+  courseId         String
+  course           Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  moduleId         String?
+  module           Module?       @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  kind             String        @default("QUIZ")
+  title            String
+  description      String        @default("")
+  /// Minutes. null = no time limit
+  timeLimitMin     Int?
+  /// 0 = unlimited
+  maxAttempts      Int           @default(1)
+  opensAt          DateTime?
+  closesAt         DateTime?
+  shuffleQuestions Boolean       @default(false)
+  /// Each student gets this many questions picked at random from the quiz. null = all questions.
+  drawCount        Int?
+  showResults      String        @default("IMMEDIATE")
+  published        Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+  questions        Question[]
+  attempts         QuizAttempt[]
+
+  @@index([courseId, closesAt])
+}
+
+/// type: "SINGLE" | "MULTIPLE" | "TRUE_FALSE" | "SHORT" | "ESSAY"
+/// options: [{ id, text, correct }] for choice questions. answers: accepted answers for SHORT.
+model Question {
+  id          String @id @default(cuid())
+  quizId      String
+  quiz        Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  type        String
+  prompt      String
+  points      Int    @default(1)
+  position    Int    @default(0)
+  options     Json   @default("[]")
+  answers     Json   @default("[]")
+  explanation String @default("")
+
+  @@index([quizId, position])
+}
+
+model QuizAttempt {
+  id            String    @id @default(cuid())
+  quizId        String
+  quiz          Quiz      @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  studentId     String
+  student       User      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  startedAt     DateTime  @default(now())
+  /// When the attempt must end (time limit or close date). null = no limit
+  deadlineAt    DateTime?
+  submittedAt   DateTime?
+  /// { [questionId]: string | string[] }
+  answers       Json      @default("{}")
+  /// { [questionId]: points awarded }. Missing entries are waiting for the teacher.
+  awarded       Json      @default("{}")
+  questionOrder Json      @default("[]")
+  score         Float?
+  maxScore      Int       @default(0)
+  needsReview   Boolean   @default(false)
+  feedback      String?
+  /// How many times the student left the page during the attempt
+  focusLost     Int       @default(0)
+
+  @@index([quizId, studentId])
+  @@index([studentId])
+}
+
+/// A file or link a student hands in with an assignment. kind: "FILE" | "LINK"
+model SubmissionAttachment {
+  id           String      @id @default(cuid())
+  submissionId String
+  submission   Submission  @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  kind         String
+  title        String
+  format       String      @default("other")
+  url          String?
+  fileId       String?     @unique
+  file         StoredFile? @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  createdAt    DateTime    @default(now())
+
+  @@index([submissionId])
+}
+
+/// A calendar event. courseId = null means a school-wide event (created by an administrator).
+model Event {
+  id          String    @id @default(cuid())
+  schoolId    String
+  school      School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  courseId    String?
+  course      Course?   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdById String?
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  title       String
+  description String    @default("")
+  location    String    @default("")
+  startsAt    DateTime
+  endsAt      DateTime?
+  allDay      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  @@index([schoolId, startsAt])
+  @@index([courseId, startsAt])
+}
+
+/// A parent or guardian account linked to a student.
+model ParentLink {
+  parentId  String
+  parent    User     @relation("ParentSide", fields: [parentId], references: [id], onDelete: Cascade)
+  studentId String
+  student   User     @relation("ChildSide", fields: [studentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([parentId, studentId])
+  @@index([studentId])
+}
+
+/// status: "PRESENT" | "ABSENT" | "LATE" | "EXCUSED"
+model Attendance {
+  id           String   @id @default(cuid())
+  courseId     String
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  studentId    String
+  student      User     @relation("AttendanceStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  date         DateTime @db.Date
+  status       String
+  note         String   @default("")
+  recordedById String?
+  recordedBy   User?    @relation("AttendanceRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
+  updatedAt    DateTime @updatedAt
+
+  @@unique([courseId, studentId, date])
+  @@index([studentId, date])
+}
+
+/// Reusable questions shared by the school's teachers.
+model BankQuestion {
+  id          String   @id @default(cuid())
+  schoolId    String
+  school      School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  ownerId     String?
+  owner       User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  category    String   @default("General")
+  type        String
+  prompt      String
+  points      Int      @default(1)
+  options     Json     @default("[]")
+  answers     Json     @default("[]")
+  explanation String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([schoolId, category])
+}
+
+/// Terms / quarters used for report cards.
+model GradingPeriod {
+  id       String   @id @default(cuid())
+  schoolId String
+  school   School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name     String
+  startsAt DateTime
+  endsAt   DateTime
+
+  @@index([schoolId, startsAt])
+}
+
+/// Custom email templates. key: "welcome" | "tempPassword" | "resetLink" | "dueReminder" | "parentDigest".
+/// At most one per key is active; with none active the built-in default is used.
+model EmailTemplate {
+  id          String   @id @default(cuid())
+  key         String
+  name        String
+  subject     String
+  heading     String
+  body        String
+  buttonLabel String   @default("")
+  active      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([key, active])
+}
+
+/// Remembers which reminders and digests were already sent, so background jobs never send twice.
+model JobLog {
+  key       String   @id
+  createdAt DateTime @default(now())
 }

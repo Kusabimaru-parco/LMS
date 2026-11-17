@@ -5,7 +5,7 @@ export const SESSION_COOKIE = "lms_session";
 const MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
 export type SessionPayload = { userId: string; schoolId: string; role: Role };
-export type Role = "ADMIN" | "TEACHER" | "STUDENT";
+export type Role = "ADMIN" | "TEACHER" | "STUDENT" | "PARENT";
 
 function key() {
   const secret = process.env.AUTH_SECRET;
@@ -21,11 +21,11 @@ export async function signSession(payload: SessionPayload) {
     .sign(key());
 }
 
-export async function verifySession(token: string | undefined): Promise<SessionPayload | null> {
+export async function verifySession(token: string | undefined): Promise<(SessionPayload & { iat?: number }) | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, key());
-    return payload as unknown as SessionPayload;
+    return payload as unknown as SessionPayload & { iat?: number };
   } catch {
     return null;
   }

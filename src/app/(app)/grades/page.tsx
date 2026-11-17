@@ -7,22 +7,18 @@ import { courseScope } from "@/lib/queries";
 import { Card, CardHeader, EmptyState, PageHeader, ProgressBar, focusRing } from "@/components/ui";
 import { CourseDot } from "@/components/lms";
 import { cn, letterGrade, percent } from "@/lib/utils";
+import { bestAttempts } from "@/lib/attempts";
+import { formatScore, resultsVisible } from "@/lib/quiz";
+import { average, courseWeights, weightsLabel, type Category } from "@/lib/grading";
 
 export const metadata: Metadata = { title: "Grades" };
 
-function avg(list: { score: number | null; points: number }[]) {
-  const g = list.filter((x) => x.score != null);
-  if (!g.length) return null;
-  const earned = g.reduce((s, x) => s + (x.score ?? 0), 0);
-  const total = g.reduce((s, x) => s + x.points, 0);
-  return Math.round((earned / total) * 100);
-}
 
 const gradeTone = (p: number | null) =>
   p == null ? "text-slate-400" : p >= 85 ? "text-emerald-700" : p >= 70 ? "text-slate-900" : "text-rose-700";
 
 export default async function GradesPage({ searchParams }: { searchParams: Promise<{ course?: string }> }) {
-  const user = await requireUser();
+  const user = await requireUser(["ADMIN", "TEACHER", "STUDENT"]);
   const { course } = await searchParams;
   return user.role === "STUDENT" ? <StudentGrades user={user} /> : <Gradebook user={user} courseId={course} />;
 }
@@ -32,15 +28,47 @@ async function StudentGrades({ user }: { user: CurrentUser }) {
     where: courseScope(user),
     orderBy: { title: "asc" },
     include: {
+      school: { select: { gradeWeights: true } },
       assignments: {
         orderBy: { dueAt: "asc" },
         include: { submissions: { where: { studentId: user.id }, select: { score: true, gradedAt: true, feedback: true } } },
       },
+      quizzes: {
+        where: { published: true },
+        orderBy: { createdAt: "asc" },
+        include: { attempts: { where: { studentId: user.id, submittedAt: { not: null } }, select: { quizId: true, studentId: true, score: true, maxScore: true, submittedAt: true, needsReview: true } } },
+      },
     },
   });
   const rows = courses.map((c) => {
-    const items = c.assignments.map((a) => ({ ...a, score: a.submissions[0]?.gradedAt ? a.submissions[0].score : null }));
-    return { ...c, items, pct: avg(items) };
+    const items = [
+      ...c.assignments.map((a) => ({
+        id: a.id,
+        title: a.title,
+        href: `/courses/${c.id}/assignments/${a.id}`,
+        points: a.points,
+        score: a.submissions[0]?.gradedAt ? a.submissions[0].score : null,
+        pending: !!a.submissions[0] && !a.submissions[0].gradedAt,
+        at: a.dueAt,
+        category: "assignment" as Category,
+      })),
+      ...c.quizzes.map((q) => {
+        const best = bestAttempts(q.attempts).get(`${q.id}:${user.id}`);
+        const show = !!best && !best.needsReview && resultsVisible(q).score;
+        return {
+          id: q.id,
+          title: `${q.kind === "EXAM" ? "Exam" : "Quiz"}: ${q.title}`,
+          href: `/courses/${c.id}/quizzes/${q.id}`,
+          points: best?.maxScore ?? 0,
+          score: show ? best!.score : null,
+          pending: !!best && !show,
+          at: q.closesAt ?? q.createdAt,
+          category: (q.kind === "EXAM" ? "exam" : "quiz") as Category,
+        };
+      }),
+    ].sort((a, b) => a.at.getTime() - b.at.getTime());
+    const weights = courseWeights(c.gradeWeights, c.school.gradeWeights);
+    return { ...c, items, weights, pct: average(items, weights) };
   });
 
   return (
@@ -68,15 +96,15 @@ async function StudentGrades({ user }: { user: CurrentUser }) {
       <div className="space-y-6">
         {rows.map((c) => (
           <Card key={c.id} id={`course-${c.id}`} className="scroll-mt-20">
-            <CardHeader title={c.title} description={c.pct == null ? "No grades yet" : `Average ${c.pct}% (${letterGrade(c.pct)})`} />
+            <CardHeader title={c.title} description={`${c.pct == null ? "No grades yet" : `Average ${c.pct}% (${letterGrade(c.pct)})`} · ${weightsLabel(c.weights)}`} />
             <ul className="divide-y divide-slate-100">
               {c.items.map((a) => {
                 const p = percent(a.score, a.points);
                 return (
                   <li key={a.id}>
-                    <Link href={`/courses/${c.id}/assignments/${a.id}`} className="flex items-center gap-4 px-5 py-3 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none">
+                    <Link href={a.href} className="flex items-center gap-4 px-5 py-3 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none">
                       <span className="min-w-0 flex-1 truncate text-sm text-slate-900">{a.title}</span>
-                      <span className="text-sm text-slate-500">{a.score == null ? (a.submissions[0] ? "Pending" : "—") : `${a.score}/${a.points}`}</span>
+                      <span className="text-sm text-slate-500">{a.score == null ? (a.pending ? "Pending" : "—") : `${formatScore(a.score)}/${a.points}`}</span>
                       <span className={cn("w-12 text-right text-sm font-semibold", gradeTone(p))}>{p == null ? "" : `${p}%`}</span>
                     </Link>
                   </li>
@@ -91,7 +119,7 @@ async function StudentGrades({ user }: { user: CurrentUser }) {
 }
 
 async function Gradebook({ user, courseId }: { user: CurrentUser; courseId?: string }) {
-  const courses = await db.course.findMany({ where: courseScope(user), orderBy: { title: "asc" }, select: { id: true, title: true, color: true } });
+  const courses = await db.course.findMany({ where: courseScope(user), orderBy: { title: "asc" }, select: { id: true, title: true, color: true, gradeWeights: true, school: { select: { gradeWeights: true } } } });
   if (!courses.length)
     return (
       <>
@@ -100,16 +128,24 @@ async function Gradebook({ user, courseId }: { user: CurrentUser; courseId?: str
       </>
     );
   const selected = courses.find((c) => c.id === courseId) ?? courses[0];
-  const [assignments, enrolled] = await Promise.all([
+  const [assignments, quizzes, enrolled] = await Promise.all([
     db.assignment.findMany({ where: { courseId: selected.id }, orderBy: { dueAt: "asc" }, include: { submissions: true } }),
+    db.quiz.findMany({
+      where: { courseId: selected.id, OR: [{ published: true }, { attempts: { some: {} } }] },
+      orderBy: { createdAt: "asc" },
+      include: { questions: { select: { points: true } }, attempts: { where: { submittedAt: { not: null } }, select: { id: true, quizId: true, studentId: true, score: true, maxScore: true, submittedAt: true, needsReview: true } } },
+    }),
     db.enrollment.findMany({ where: { courseId: selected.id }, include: { user: { select: { id: true, name: true } } }, orderBy: { user: { name: "asc" } } }),
   ]);
   const cell = (aId: string, sId: string) => assignments.find((a) => a.id === aId)?.submissions.find((s) => s.studentId === sId);
+  const best = bestAttempts(quizzes.flatMap((q) => q.attempts));
+  const weights = courseWeights(selected.gradeWeights, selected.school.gradeWeights);
+  const quizPoints = (q: (typeof quizzes)[number]) => q.questions.reduce((n, x) => n + x.points, 0);
 
   return (
     <>
-      <PageHeader title="Gradebook" description="Scores for every student and assignment." />
-      <nav aria-label="Choose course" className="mb-4 -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+      <PageHeader title="Gradebook" description={`Scores for every student, assignment, quiz and exam. Averages: ${weightsLabel(weights)}.`} />
+      <nav aria-label="Choose course" className="mb-4 no-scrollbar -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
         <ul className="flex min-w-max gap-2">
           {courses.map((c) => {
             const active = c.id === selected.id;
@@ -149,11 +185,25 @@ async function Gradebook({ user, courseId }: { user: CurrentUser; courseId?: str
                     <span className="font-normal text-slate-400">/{a.points}</span>
                   </th>
                 ))}
+                {quizzes.map((q) => (
+                  <th key={q.id} scope="col" className="max-w-36 px-4 py-3 text-right font-medium">
+                    <Link href={`/courses/${selected.id}/quizzes/${q.id}`} className="hover:text-brand-700 hover:underline">
+                      <span className="block truncate">{q.title}</span>
+                    </Link>
+                    <span className="font-normal text-slate-400">{q.kind === "EXAM" ? "Exam" : "Quiz"} /{quizPoints(q)}</span>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {enrolled.map(({ user: s }) => {
-                const p = avg(assignments.map((a) => ({ score: cell(a.id, s.id)?.gradedAt ? cell(a.id, s.id)!.score : null, points: a.points })));
+                const p = average([
+                  ...assignments.map((a) => ({ category: "assignment" as Category, score: cell(a.id, s.id)?.gradedAt ? cell(a.id, s.id)!.score : null, points: a.points })),
+                  ...quizzes.map((q) => {
+                    const b = best.get(`${q.id}:${s.id}`);
+                    return { category: (q.kind === "EXAM" ? "exam" : "quiz") as Category, score: b && !b.needsReview ? b.score : null, points: b?.maxScore ?? quizPoints(q) };
+                  }),
+                ], weights);
                 return (
                   <tr key={s.id} className="hover:bg-slate-50">
                     <th scope="row" className="sticky left-0 z-10 bg-white px-4 py-3 text-left font-medium text-slate-900">{s.name}</th>
@@ -173,6 +223,19 @@ async function Gradebook({ user, courseId }: { user: CurrentUser; courseId?: str
                               <span className="text-slate-400">—</span>
                             )}
                           </Link>
+                        </td>
+                      );
+                    })}
+                    {quizzes.map((q) => {
+                      const b = best.get(`${q.id}:${s.id}`);
+                      const closed = !!q.closesAt && q.closesAt < new Date();
+                      return (
+                        <td key={q.id} className="px-4 py-3 text-right">
+                          {b ? (
+                            <Link href={`/courses/${selected.id}/quizzes/${q.id}/attempts/${b.id}`} className="rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
+                              {b.needsReview ? <span className="font-medium text-amber-700">Review</span> : <span className="text-slate-900">{formatScore(b.score)}</span>}
+                            </Link>
+                          ) : closed ? <span className="text-rose-600">Missing</span> : <span className="text-slate-400">—</span>}
                         </td>
                       );
                     })}

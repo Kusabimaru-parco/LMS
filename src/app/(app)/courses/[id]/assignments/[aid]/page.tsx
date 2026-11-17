@@ -4,11 +4,15 @@ import { notFound } from "next/navigation";
 import { CalendarClock, CheckCircle2, ChevronRight, Inbox, Trophy } from "lucide-react";
 import { canAccessCourse, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { gradeSubmission, submitAssignment } from "@/app/actions";
+import { gradeSubmission, removeSubmissionAttachment, setRubric, type RubricCriterion } from "@/app/actions";
+import { RubricEditor, RubricGrader } from "@/components/rubric";
 import { Avatar, Badge, Card, CardHeader, EmptyState } from "@/components/ui";
 import { AssignmentStatus } from "@/components/lms";
 import { SimpleForm } from "@/components/simple-form";
-import { cn, formatDue, percent, timeAgo } from "@/lib/utils";
+import { SubmissionForm } from "@/components/submission-form";
+import { AttachmentList } from "@/components/materials";
+import { ACCEPT, MAX_UPLOAD_MB } from "@/lib/storage";
+import { cn, formatDue, percent, timeAgo, avatarUrl } from "@/lib/utils";
 
 type P = { params: Promise<{ id: string; aid: string }>; searchParams: Promise<{ student?: string }> };
 
@@ -40,7 +44,7 @@ export default async function AssignmentPage({ params, searchParams }: P) {
       </nav>
 
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-[1.75rem]">{assignment.title}</h1>
+        <h1 className="font-display text-[1.75rem] font-semibold leading-tight text-slate-900 sm:text-[2.125rem]">{assignment.title}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-600">
           <span className="inline-flex items-center gap-1.5"><CalendarClock className="size-4" aria-hidden />Due {formatDue(assignment.dueAt)}</span>
           <span className="inline-flex items-center gap-1.5"><Trophy className="size-4" aria-hidden />{assignment.points} points</span>
@@ -56,7 +60,39 @@ export default async function AssignmentPage({ params, searchParams }: P) {
   );
 }
 
-type A = { id: string; instructions: string; points: number; dueAt: Date };
+type A = { id: string; instructions: string; points: number; dueAt: Date; rubric: unknown };
+
+const rubricOf = (a: A) => (Array.isArray(a.rubric) ? (a.rubric as RubricCriterion[]) : []);
+
+/** The rubric as a table. With `picked`, the chosen level in each row is highlighted. */
+function RubricView({ rubric, picked }: { rubric: RubricCriterion[]; picked?: Record<string, string> }) {
+  return (
+    <Card>
+      <CardHeader title="Rubric" description={picked ? "How your work was marked" : "How your work will be marked"} />
+      <div className="divide-y divide-slate-100">
+        {rubric.map((c) => (
+          <div key={c.id} className="px-5 py-4">
+            <p className="mb-2 text-sm font-semibold text-slate-900">{c.title}</p>
+            <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {c.levels.map((l) => {
+                const on = picked?.[c.id] === l.id;
+                return (
+                  <li key={l.id} className={cn("rounded-lg border p-3 text-sm", on ? "border-brand-600 bg-brand-50" : "border-slate-200")}>
+                    <span className="flex items-baseline justify-between gap-2">
+                      <span className="font-medium text-slate-900">{l.label}{on && <span className="sr-only"> (your level)</span>}</span>
+                      <span className="text-xs text-slate-500">{l.points} pts</span>
+                    </span>
+                    {l.description && <span className="mt-1 block text-xs text-slate-600">{l.description}</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
 
 function Instructions({ text }: { text: string }) {
   return (
@@ -67,34 +103,42 @@ function Instructions({ text }: { text: string }) {
   );
 }
 
+const attachmentInclude = { attachments: { orderBy: { createdAt: "asc" as const }, include: { file: { select: { id: true, name: true, size: true, mime: true } } } } };
+
 async function StudentView({ assignment, userId }: { assignment: A; userId: string }) {
-  const sub = await db.submission.findUnique({ where: { assignmentId_studentId: { assignmentId: assignment.id, studentId: userId } } });
+  const sub = await db.submission.findUnique({
+    where: { assignmentId_studentId: { assignmentId: assignment.id, studentId: userId } },
+    include: attachmentInclude,
+  });
   const pct = percent(sub?.score, assignment.points);
   return (
     <div className="grid gap-6 lg:grid-cols-3">
       <div className="space-y-6 lg:col-span-2">
         <Instructions text={assignment.instructions} />
+        {rubricOf(assignment).length > 0 && (
+          <RubricView rubric={rubricOf(assignment)} picked={sub?.gradedAt ? ((sub.rubricScores ?? {}) as Record<string, string>) : undefined} />
+        )}
         <Card>
           <CardHeader title="Your work" action={<AssignmentStatus dueAt={assignment.dueAt} points={assignment.points} submission={sub ?? undefined} />} />
-          <div className="p-5">
-            {sub?.gradedAt ? (
-              <p className="whitespace-pre-line rounded-lg bg-slate-50 p-4 text-sm text-slate-700">{sub.content}</p>
-            ) : (
-              <SimpleForm
-                action={submitAssignment.bind(null, assignment.id)}
-                submitLabel={sub ? "Update submission" : "Submit work"}
-                pendingLabel="Submitting…"
-                fields={[
-                  {
-                    name: "content",
-                    label: "Your answer",
-                    type: "textarea",
-                    rows: 8,
-                    required: true,
-                    defaultValue: sub?.content,
-                    hint: sub ? `Submitted ${timeAgo(sub.submittedAt)}. You can update it until it's graded.` : "Write or paste your answer here.",
-                  },
-                ]}
+          <div className="space-y-5 p-5">
+            {sub && (
+              <div className="space-y-3">
+                <p className="text-sm text-slate-600">
+                  Handed in {timeAgo(sub.submittedAt)}{sub.submittedAt > assignment.dueAt && <span className="font-medium text-amber-700"> (late)</span>}.
+                  {!sub.gradedAt && " You can change it until it's graded."}
+                </p>
+                {sub.gradedAt && sub.content && <p className="whitespace-pre-line rounded-lg bg-slate-50 p-4 text-sm text-slate-700">{sub.content}</p>}
+                <AttachmentList items={sub.attachments} removeAction={sub.gradedAt ? undefined : (id) => removeSubmissionAttachment.bind(null, id)} />
+              </div>
+            )}
+            {!sub?.gradedAt && (
+              <SubmissionForm
+                assignmentId={assignment.id}
+                maxMb={MAX_UPLOAD_MB}
+                accept={ACCEPT}
+                defaultContent={sub?.content ?? ""}
+                existingCount={sub?.attachments.length ?? 0}
+                isUpdate={!!sub}
               />
             )}
           </div>
@@ -125,8 +169,8 @@ async function StudentView({ assignment, userId }: { assignment: A; userId: stri
 
 async function TeacherView({ assignment, courseId, selected }: { assignment: A; courseId: string; selected?: string }) {
   const [enrolled, subs] = await Promise.all([
-    db.enrollment.findMany({ where: { courseId }, include: { user: { select: { id: true, name: true } } }, orderBy: { user: { name: "asc" } } }),
-    db.submission.findMany({ where: { assignmentId: assignment.id } }),
+    db.enrollment.findMany({ where: { courseId }, include: { user: { select: { id: true, name: true, email: true, avatarUpdatedAt: true } } }, orderBy: { user: { name: "asc" } } }),
+    db.submission.findMany({ where: { assignmentId: assignment.id }, include: attachmentInclude }),
   ]);
   const byStudent = new Map(subs.map((s) => [s.studentId, s]));
   const current = selected ? enrolled.find((e) => e.user.id === selected)?.user : undefined;
@@ -150,7 +194,7 @@ async function TeacherView({ assignment, courseId, selected }: { assignment: A; 
                     aria-current={active ? "true" : undefined}
                     className={cn("flex items-center gap-3 px-5 py-3 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none", active && "bg-brand-50 hover:bg-brand-50")}
                   >
-                    <Avatar name={s.name} size="sm" />
+                    <Avatar name={s.name} size="sm" src={avatarUrl(s)} />
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">{s.name}</span>
                     {sub?.gradedAt ? (
                       <Badge tone="success">{sub.score}/{assignment.points}</Badge>
@@ -166,6 +210,10 @@ async function TeacherView({ assignment, courseId, selected }: { assignment: A; 
           </ul>
         </Card>
         <Instructions text={assignment.instructions} />
+        <Card>
+          <CardHeader title="Rubric" description={rubricOf(assignment).length ? `${rubricOf(assignment).length} criteria · out of ${assignment.points} points` : undefined} />
+          <RubricEditor initial={rubricOf(assignment)} save={setRubric.bind(null, assignment.id)} />
+        </Card>
       </div>
 
       <div id="grade" className="scroll-mt-20 lg:col-span-3">
@@ -174,26 +222,45 @@ async function TeacherView({ assignment, courseId, selected }: { assignment: A; 
             <>
               <CardHeader
                 title={current.name}
-                description={currentSub ? `Submitted ${timeAgo(currentSub.submittedAt)}` : "No submission yet"}
+                description={
+                  <>
+                    <a href={`mailto:${current.email}`} className="text-brand-700 hover:underline">{current.email}</a>
+                    {" · "}
+                    {currentSub ? `Handed in ${timeAgo(currentSub.submittedAt)}${currentSub.submittedAt > assignment.dueAt ? " (late)" : ""}` : "No submission yet"}
+                  </>
+                }
               />
               <div className="space-y-5 p-5">
                 {currentSub ? (
                   <>
-                    <div className="whitespace-pre-line rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-800">{currentSub.content}</div>
+                    {currentSub.content && (
+                      <div className="whitespace-pre-line rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-800">{currentSub.content}</div>
+                    )}
+                    <AttachmentList items={currentSub.attachments} />
                     {currentSub.gradedAt && (
                       <p className="flex items-center gap-2 text-sm text-emerald-700">
                         <CheckCircle2 className="size-4" aria-hidden /> Graded {currentSub.score}/{assignment.points} — you can change the grade below.
                       </p>
                     )}
-                    <SimpleForm
-                      key={currentSub.id}
-                      action={gradeSubmission.bind(null, currentSub.id)}
-                      submitLabel="Save grade"
-                      fields={[
-                        { name: "score", label: `Score (out of ${assignment.points})`, type: "number", required: true, min: 0, max: assignment.points, defaultValue: currentSub.score?.toString(), half: true },
-                        { name: "feedback", label: "Feedback for the student", type: "textarea", rows: 4, defaultValue: currentSub.feedback ?? "", placeholder: "What went well, and one thing to improve." },
-                      ]}
-                    />
+                    {rubricOf(assignment).length ? (
+                      <RubricGrader
+                        key={currentSub.id}
+                        rubric={rubricOf(assignment)}
+                        scores={(currentSub.rubricScores ?? {}) as Record<string, string>}
+                        feedback={currentSub.feedback ?? ""}
+                        action={gradeSubmission.bind(null, currentSub.id)}
+                      />
+                    ) : (
+                      <SimpleForm
+                        key={currentSub.id}
+                        action={gradeSubmission.bind(null, currentSub.id)}
+                        submitLabel="Save grade"
+                        fields={[
+                          { name: "score", label: `Score (out of ${assignment.points})`, type: "number", required: true, min: 0, max: assignment.points, defaultValue: currentSub.score?.toString(), half: true },
+                          { name: "feedback", label: "Feedback for the student", type: "textarea", rows: 4, defaultValue: currentSub.feedback ?? "", placeholder: "What went well, and one thing to improve." },
+                        ]}
+                      />
+                    )}
                   </>
                 ) : (
                   <p className="text-sm text-slate-500">This student hasn't submitted anything yet.</p>

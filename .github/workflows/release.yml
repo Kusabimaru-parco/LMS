@@ -1,0 +1,56 @@
+# Push a tag like v1.1.0 to publish a release:
+#   - a Docker image on GitHub Container Registry (ghcr.io/<owner>/campus-lms:1.1.0 and :latest)
+#   - campus-lms-1.1.0.tar.gz (Linux), campus-lms-1.1.0.zip (Windows), latest.json and SHA256SUMS
+#     attached to a GitHub Release
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches package.json
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME doesn't match package.json version $v"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: APP_VERSION=${{ env.VERSION }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/campus-lms:${{ env.VERSION }}
+            ghcr.io/${{ github.repository_owner }}/campus-lms:latest
+
+      - name: Package the release files
+        env:
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+        run: bash scripts/package-release.sh
+
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/campus-lms-*.tar.gz
+            dist/campus-lms-*.zip
+            dist/latest.json
+            dist/SHA256SUMS
+          generate_release_notes: true

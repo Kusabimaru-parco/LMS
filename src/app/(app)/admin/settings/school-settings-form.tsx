@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useFormAction } from "@/components/use-form-action";
 import { GraduationCap } from "lucide-react";
 import { updateSchool } from "@/app/actions";
 import { Alert, Card, CardHeader, Field, Input } from "@/components/ui";
@@ -19,7 +20,7 @@ type School = {
 };
 
 export function SchoolSettingsForm({ school }: { school: School }) {
-  const [state, action] = useActionState(updateSchool, undefined);
+  const { state, pending, onSubmit } = useFormAction(updateSchool);
   const [timezones, setTimezones] = useState<string[]>([school.timezone]);
   const [preview, setPreview] = useState<string | null>(school.logoUrl);
   const [remove, setRemove] = useState(false);
@@ -32,7 +33,7 @@ export function SchoolSettingsForm({ school }: { school: School }) {
   }, [state]);
 
   return (
-    <form action={action} className="space-y-6" noValidate>
+    <form onSubmit={onSubmit} className="space-y-6" noValidate>
       {state?.message && <Alert tone={state.ok ? "success" : "danger"}>{state.message}</Alert>}
 
       <Card>
@@ -106,7 +107,7 @@ export function SchoolSettingsForm({ school }: { school: School }) {
       </Card>
 
       <div className="flex justify-end">
-        <SubmitButton>Save changes</SubmitButton>
+        <SubmitButton pending={pending}>Save changes</SubmitButton>
       </div>
     </form>
   );

@@ -1,19 +1,19 @@
 "use client";
 
-import { useActionState } from "react";
+import { useFormAction } from "@/components/use-form-action";
 import { createCourse } from "@/app/actions";
 import { Alert, ButtonLink, Card, Field, Input, Select, Textarea } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
 import { COURSE_COLORS, cn } from "@/lib/utils";
 
 export function CourseForm({ teachers, isAdmin }: { teachers: { id: string; name: string }[]; isAdmin: boolean }) {
-  const [state, action] = useActionState(createCourse, undefined);
+  const { state, pending, onSubmit } = useFormAction(createCourse);
   const e = state?.errors ?? {};
   const err = (k: string) => ({ "aria-invalid": !!e[k], "aria-describedby": e[k] ? `${k}-error` : undefined });
 
   return (
     <Card>
-      <form action={action} className="space-y-5 p-5 sm:p-6" noValidate>
+      <form onSubmit={onSubmit} className="space-y-5 p-5 sm:p-6" noValidate>
         {state?.message && <Alert tone="danger">{state.message}</Alert>}
         <div className="grid gap-5 sm:grid-cols-3">
           <div className="sm:col-span-2">
@@ -56,7 +56,7 @@ export function CourseForm({ teachers, isAdmin }: { teachers: { id: string; name
         </fieldset>
         <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end">
           <ButtonLink href="/courses" variant="secondary">Cancel</ButtonLink>
-          <SubmitButton pendingText="Creating…">Create course</SubmitButton>
+          <SubmitButton pending={pending} pendingText="Creating…">Create course</SubmitButton>
         </div>
       </form>
     </Card>

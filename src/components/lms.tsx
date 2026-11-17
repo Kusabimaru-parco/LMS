@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AlertCircle, CheckCircle2, Circle, Clock, Send, Users, BookOpen } from "lucide-react";
 import { Badge, Card, ProgressBar, focusRing } from "./ui";
 import { cn, courseColor, formatDue, percent } from "@/lib/utils";
+import { coverStyle } from "@/lib/patterns";
 
 type Sub = { score: number | null; gradedAt: Date | null; submittedAt: Date } | undefined;
 
@@ -33,7 +34,7 @@ export function CourseCard({
     description: string;
     progress: number;
     teacher: { name: string } | null;
-    _count: { enrollments: number; lessons: number };
+    _count: { enrollments: number; lessons: number; assignments?: number; quizzes?: number };
   };
   showProgress: boolean;
 }) {
@@ -41,24 +42,23 @@ export function CourseCard({
   return (
     <Link
       href={`/courses/${course.id}`}
-      className={cn("group block rounded-xl transition-shadow hover:shadow-md", focusRing)}
+      className={cn("group block animate-rise rounded-2xl transition-transform duration-200 hover:-translate-y-0.5", focusRing)}
     >
-      <Card className="flex h-full flex-col overflow-hidden">
-        <div className={cn("relative h-20", c.bg)}>
-          <div aria-hidden className="absolute inset-0 bg-[radial-gradient(circle_at_85%_20%,rgba(255,255,255,0.28),transparent_55%)]" />
-          <span className="absolute bottom-3 left-5 rounded-md bg-white/20 px-2 py-0.5 text-xs font-semibold tracking-wide text-white backdrop-blur-sm">
+      <Card className="flex h-full flex-col overflow-hidden transition-shadow duration-200 group-hover:shadow-md">
+        <div className={cn("relative h-24", c.bg)} style={coverStyle(course.id)}>
+          <span className="absolute bottom-0 left-5 translate-y-1/2 rounded-lg bg-white px-2.5 py-1 font-mono text-xs font-semibold tracking-wide text-slate-800 shadow-sm ring-1 ring-slate-200">
             {course.code}
           </span>
         </div>
-        <div className="flex flex-1 flex-col p-5">
-          <h3 className="text-base font-semibold text-slate-900 group-hover:text-brand-700">{course.title}</h3>
+        <div className="flex flex-1 flex-col p-5 pt-6">
+          <h3 className="font-display text-lg font-semibold leading-snug text-slate-900 group-hover:text-brand-700">{course.title}</h3>
           <p className="mt-1 line-clamp-2 text-sm text-slate-600">{course.description || "No description yet."}</p>
           <div className="mt-auto pt-4">
             {showProgress ? (
               <div className="space-y-1.5">
                 <div className="flex justify-between text-xs text-slate-500">
                   <span>{course.progress}% complete</span>
-                  <span>{course._count.lessons} lessons</span>
+                  <span>{course._count.lessons + (course._count.assignments ?? 0) + (course._count.quizzes ?? 0)} activities</span>
                 </div>
                 <ProgressBar value={course.progress} label={`${course.title} progress`} />
               </div>
